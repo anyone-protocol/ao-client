@@ -20,14 +20,20 @@ import {
   fetchNodeAddress, readRaw, readSlotOutput, readState, readView, sendMessage,
   spawnProcess,
 } from './client.js'
+import { AoValidationError } from './errors.js'
 import type {
   AoConfig, SendOptions, SendResult, SpawnOptions, SpawnResult, ViewParams,
 } from './types.js'
 
 export * from './types.js'
+// The full error taxonomy is part of the public surface: consumers branch on these
+// (a contract rejection is a business outcome, a 5xx is an outage). Exporting from
+// './errors.js' directly rather than re-listing through client.js, so adding an
+// error class cannot silently fail to reach consumers.
+export * from './errors.js'
 export {
-  AoHttpError, AoNotFoundError, fetchNodeAddress, moduleIdFor, readRaw,
-  readSlotOutput, readState, readView, sendMessage, spawnProcess,
+  fetchNodeAddress, moduleIdFor, readRaw, readSlotOutput, readState, readView,
+  sendMessage, spawnProcess,
 } from './client.js'
 
 export interface AoClient {
@@ -69,13 +75,13 @@ export function nodeUrlFromEnv (
 ): string {
   const url = env[varName]?.trim()
   if (!url) {
-    throw new Error(
-      `ao-client: ${varName} is not set. It must point at our HyperBEAM node ` +
-      `(e.g. https://hb.anyone.tech). There is deliberately no default.`
+    throw new AoValidationError(
+      `${varName} is not set. It must point at our HyperBEAM node ` +
+      '(e.g. https://hb.anyone.tech). There is deliberately no default.'
     )
   }
   if (!/^https?:\/\//.test(url)) {
-    throw new Error(`ao-client: ${varName} must be an absolute http(s) URL, got "${url}"`)
+    throw new AoValidationError(`${varName} must be an absolute http(s) URL, got "${url}"`)
   }
   return url
 }
