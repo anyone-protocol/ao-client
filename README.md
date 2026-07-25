@@ -12,11 +12,30 @@ the package ships both ESM and CJS builds.
 
 ## Install
 
-```sh
-npm install @anyone-protocol/ao-client @dha-team/arbundles
+Consumed as a **git dependency** — deliberately, and temporarily. There is no npm
+registry to publish to yet: GitHub Packages' npm registry requires authentication
+even for public packages, which would mean threading a token into six services' CI
+*and* their Docker builds for a package that is public and AGPL anyway. A git
+dependency needs no registry, no auth, and no infrastructure, and moving to a real
+registry later is a one-line change in each consumer's `package.json`.
+
+```jsonc
+// package.json
+"dependencies": {
+  "@anyone-protocol/ao-client": "github:anyone-protocol/ao-client#v0.1.0",
+  "@dha-team/arbundles": "^1.0.3"
+}
 ```
 
-`@dha-team/arbundles` is a peer dependency — you supply the signer.
+Pin a **tag or commit sha**, never a branch — the API is still moving, and a floating
+branch would let a consumer's build change underneath it.
+
+`dist/` is not committed; the `prepare` script builds it on install (npm installs the
+package's devDependencies to do so). `@dha-team/arbundles` is a peer dependency — you
+supply the signer.
+
+The trade-offs of this being a git dep: no semver ranges, no dist-tags, no `npm audit`
+surface. Fine while the API is unstable; revisit once it settles.
 
 ## Usage
 
