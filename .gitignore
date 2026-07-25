@@ -1,5 +1,12 @@
 node_modules/
-dist/
 *.tsbuildinfo
 .env
 .env.*
+
+# dist/ IS committed — deliberately. As a git dependency the build would otherwise
+# have to happen on install via `prepare`, and that is not reliable across our
+# consumers: bun blocks lifecycle scripts by default (verified — the install
+# succeeds and silently produces no dist), and Docker builds commonly run
+# `--ignore-scripts`. Committing the build makes the package work identically
+# under npm, bun, yarn and pnpm with no per-consumer configuration.
+# Rebuild before tagging: npm run build.

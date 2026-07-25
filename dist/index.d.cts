@@ -1,0 +1,205 @@
+import { Signer } from '@dha-team/arbundles/web';
+
+/** An ANS-104 tag. Names must be unique and all-lowercase — see `wire.ts`. */
+interface Tag {
+    name: string;
+    value: string;
+}
+/**
+ * Where to talk and who signs.
+ *
+ * `url` has NO default, deliberately. The AO legacynet outage that forced this
+ * migration was caused by silent third-party defaults: nothing ever set MU_URL,
+ * two services read a public CU, and deploy.ts carried hardcoded fallbacks. Every
+ * endpoint in this package is explicit or it throws. Do not add a default.
+ */
+interface AoConfig {
+    /** Node base URL, e.g. https://hb.anyone.tech. Required; never defaulted. */
+    url: string;
+    /** arbundles Signer. Node: `EthereumSigner`. Browser: `InjectedEthereumSigner`. */
+    signer?: Signer;
+    /** Per-request timeout in ms (default 60_000). */
+    timeoutMs?: number;
+    /** Attempts for transient failures (default 3). Writes retry only when safe. */
+    retries?: number;
+    /** Optional sink for diagnostics; defaults to silence. */
+    logger?: Logger;
+}
+interface Logger {
+    debug?(message: string, ...meta: unknown[]): void;
+    warn?(message: string, ...meta: unknown[]): void;
+    error?(message: string, ...meta: unknown[]): void;
+}
+/** A config whose signer is known to be present — the write paths require it. */
+type SigningConfig = AoConfig & {
+    signer: Signer;
+};
+interface SpawnOptions {
+    /** Id of a lua module already readable by the node (published + cached). */
+    moduleId?: string;
+    /** Inline lua source. Mutually exclusive with `moduleId`; see `spawnProcess`. */
+    luaSource?: string;
+    /** Address whose messages the process trusts. Defaults to `schedulerLocation`. */
+    authority?: string;
+    /**
+     * Scheduler node address. Defaults to the target node's own operator address.
+     * Must match a node identity, or the node redirects to a remote scheduler —
+     * which is exactly the third-party dependency this migration exists to remove.
+     */
+    schedulerLocation?: string;
+    /**
+     * Extra tags (unique, lowercase). secp256k1 signing is deterministic, so two
+     * spawns with identical content from one wallet produce the SAME process id.
+     * Include something unique (e.g. `name`) when you want a distinct process.
+     */
+    tags?: Tag[];
+}
+interface SendOptions {
+    /** Target process id. */
+    processId: string;
+    /** Action name — sugar for a `action` tag. */
+    action?: string;
+    tags?: Tag[];
+    data?: string | Uint8Array;
+    /**
+     * Verify the CONTRACT accepted the message, not just that the node scheduled it
+     * (default true, costing one extra GET).
+     *
+     * A rejected write still returns HTTP 200 — the push succeeded, the compute
+     * failed — so without this a caller cannot distinguish "round settled" from
+     * "round silently did nothing". Set false only for writes whose outcome you
+     * establish by some other means.
+     */
+    confirm?: boolean;
+}
+interface SendResult {
+    /** The signed DataItem id of the message. */
+    id: string;
+    /** Assigned slot, when the node reports one. */
+    slot: string | null;
+    /** Raw push response body (the signed assignment). */
+    body: string;
+    /**
+     * The contract's own output for this message — `OK`, or a JSON payload for
+     * handlers that return one. Present unless `confirm` was disabled or the node
+     * reported no slot.
+     */
+    output?: string;
+}
+interface SpawnResult {
+    /** The new process id (= the signed DataItem id). */
+    processId: string;
+    slot: string | null;
+}
+/** Params for a parameterized view, e.g. `{ address: '0x…' }`. */
+type ViewParams = Record<string, string | number | boolean>;
+
+/** Any non-2xx node response. Carries the status so retries can be selective. */
+declare class AoHttpError extends Error {
+    readonly status: number;
+    readonly method: string;
+    readonly path: string;
+    readonly body: string;
+    constructor(status: number, method: string, path: string, body: string);
+}
+/** A read whose target key does not exist. Distinct from a transport failure. */
+declare class AoNotFoundError extends Error {
+    readonly path: string;
+    constructor(path: string);
+}
+/** Caller-side misuse (bad tags, missing config). Never retried — it cannot improve. */
+declare class AoValidationError extends Error {
+    constructor(message: string);
+}
+/**
+ * The message was scheduled and computed, and the CONTRACT rejected it.
+ *
+ * This is the failure mode that does not look like one: a rejected write still
+ * returns HTTP 200 with a signed assignment, because the push succeeded — only the
+ * compute failed. The reason appears solely in that slot's own output
+ * (`error: <reason>`, runtime/native.lua). A client that trusts the HTTP status
+ * reports success for a write that changed nothing, which is exactly the class of
+ * silent failure this migration exists to eliminate.
+ */
+declare class AoContractError extends Error {
+    readonly reason: string;
+    readonly processId: string;
+    readonly slot: string;
+    readonly action?: string | undefined;
+    constructor(reason: string, processId: string, slot: string, action?: string | undefined);
+}
+/**
+ * Only transport-level failures are worth repeating. A 4xx, a missing key, a
+ * malformed tag and a contract rejection are all deterministic.
+ */
+declare const isRetryable: (e: unknown) => boolean;
+
+/**
+ * Content-addressed id of a lua module child exactly as an inline spawn embeds it.
+ * After any inline spawn the node holds this child in its local cache, so later
+ * spawns can reference it by id instead of re-embedding the source — which matters:
+ * the inline form bloats EVERY scheduled slot by the module size, and the node
+ * starts rejecting pushes once the cache crosses ~1 MB.
+ */
+declare function moduleIdFor(luaSource: string): Promise<string>;
+
+/** The node's operator wallet address (43-char base64url). */
+declare function fetchNodeAddress(config: AoConfig): Promise<string>;
+/**
+ * Spawn a native `lua@5.3a` process.
+ *
+ * Prefer `moduleId` (upload once, reference by id). `luaSource` embeds the module
+ * inline in the spawn, which is useful for smoke tests but bloats every subsequent
+ * slot by the module size — the node begins rejecting pushes once its cache crosses
+ * roughly 1 MB.
+ *
+ * Fail-closed by design: `execution-device`, `scheduler-device`, `variant` and
+ * `scheduler-location` are set explicitly here rather than left to a default. The
+ * incident that started this migration was caused by defaults nobody had set.
+ */
+declare function spawnProcess(config: AoConfig, opts: SpawnOptions): Promise<SpawnResult>;
+/**
+ * Send an interaction to a process. Replaces `sendAosMessage`.
+ *
+ * Retried on transport/5xx failures only — a 4xx means the node or the contract
+ * rejected the message, and repeating it just repeats the rejection.
+ */
+declare function sendMessage(config: AoConfig, opts: SendOptions): Promise<SendResult>;
+/** Raw GET against a process path, e.g. `now/state/Claimed/0x…`. */
+declare function readRaw(config: AoConfig, processId: string, path: string): Promise<string>;
+/**
+ * Read a state key by base-addressing: `now/state/<key>`.
+ * Point lookups (`state/Rewarded/<hodler>/<operator>`) are free — no view code.
+ */
+declare function readState(config: AoConfig, processId: string, key: string): Promise<string>;
+/**
+ * Invoke a contract view: `now/~lua@5.3a/<name>[?params]`, parsed as JSON.
+ * This is the replacement for a `dryrun` carrying an `Action` tag.
+ */
+declare function readView<T = unknown>(config: AoConfig, processId: string, name: string, params?: ViewParams): Promise<T>;
+/** Slot output of a specific message, for reads served from a settle slot. */
+declare function readSlotOutput(config: AoConfig, processId: string, slot: string | number): Promise<string>;
+
+interface AoClient {
+    readonly config: AoConfig;
+    fetchNodeAddress(): Promise<string>;
+    spawnProcess(opts: SpawnOptions): Promise<SpawnResult>;
+    sendMessage(opts: SendOptions): Promise<SendResult>;
+    readState(processId: string, key: string): Promise<string>;
+    readView<T = unknown>(processId: string, name: string, params?: ViewParams): Promise<T>;
+    readSlotOutput(processId: string, slot: string | number): Promise<string>;
+    readRaw(processId: string, path: string): Promise<string>;
+}
+/** Bind a config once; every method below is the free function with it applied. */
+declare function createAoClient(config: AoConfig): AoClient;
+/**
+ * Read the node URL from the environment, failing closed.
+ *
+ * There is no default and there must never be one. Every service in this
+ * migration points at our own node explicitly; the legacynet outage happened
+ * because nothing set MU_URL, two services silently used a public CU, and
+ * deploy.ts carried hardcoded third-party fallbacks.
+ */
+declare function nodeUrlFromEnv(env?: Record<string, string | undefined>, varName?: string): string;
+
+export { type AoClient, type AoConfig, AoContractError, AoHttpError, AoNotFoundError, AoValidationError, type Logger, type SendOptions, type SendResult, type SigningConfig, type SpawnOptions, type SpawnResult, type Tag, type ViewParams, createAoClient, fetchNodeAddress, isRetryable, moduleIdFor, nodeUrlFromEnv, readRaw, readSlotOutput, readState, readView, sendMessage, spawnProcess };

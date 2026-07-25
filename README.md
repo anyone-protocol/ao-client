@@ -30,9 +30,16 @@ registry later is a one-line change in each consumer's `package.json`.
 Pin a **tag or commit sha**, never a branch — the API is still moving, and a floating
 branch would let a consumer's build change underneath it.
 
-`dist/` is not committed; the `prepare` script builds it on install (npm installs the
-package's devDependencies to do so). `@dha-team/arbundles` is a peer dependency — you
-supply the signer.
+`dist/` **is committed**, so no build runs on install. That is deliberate: `prepare`
+alone is not reliable across our consumers — **bun blocks lifecycle scripts by default**
+(the install succeeds and silently yields no `dist/`), and Docker builds commonly use
+`--ignore-scripts`. A committed build works identically under npm, bun, yarn and pnpm
+with no per-consumer configuration.
+
+The cost is that `dist/` can go stale against `src/`. **Run `npm run build` and commit
+before tagging** — the tag is what consumers pin.
+
+`@dha-team/arbundles` is a peer dependency — you supply the signer.
 
 The trade-offs of this being a git dep: no semver ranges, no dist-tags, no `npm audit`
 surface. Fine while the API is unstable; revisit once it settles.
