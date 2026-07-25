@@ -1,0 +1,47 @@
+{
+  "name": "@anyone-protocol/ao-client",
+  "version": "0.1.0",
+  "description": "HyperBEAM-native AO client for Anyone Protocol — ANS-104/EVM-signed writes and plain-HTTP reads against our own node. Replaces @permaweb/aoconnect and the seven divergent send-aos-message.ts copies.",
+  "license": "AGPL-3.0-only",
+  "contributors": [
+    "ANYONE Protocol Labs",
+    "Jim Toth <jim@memeticblock.io>"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/anyone-protocol/ao-client.git"
+  },
+  "type": "module",
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "tsup",
+    "typecheck": "tsc --noEmit",
+    "test": "node --test --experimental-strip-types test/*.test.ts",
+    "prepublishOnly": "npm run typecheck && npm run build"
+  },
+  "peerDependencies": {
+    "@dha-team/arbundles": "^1.0.3"
+  },
+  "devDependencies": {
+    "@dha-team/arbundles": "^1.0.3",
+    "@types/node": "^22.10.0",
+    "tsup": "^8.3.5",
+    "typescript": "^5.7.2"
+  }
+}
