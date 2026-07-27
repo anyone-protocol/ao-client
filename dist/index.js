@@ -265,7 +265,7 @@ async function spawnProcess(config, opts) {
     ...opts.tags ?? []
   ];
   let tags = processTags;
-  let data = new Uint8Array(0);
+  let data = opts.data ? toBytes(opts.data) : new Uint8Array(0);
   if (opts.luaSource) {
     const bundle = await encodeMapBundle({
       module: {

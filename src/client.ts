@@ -149,7 +149,7 @@ export async function spawnProcess (
   ]
 
   let tags = processTags
-  let data: Uint8Array = new Uint8Array(0)
+  let data: Uint8Array = opts.data ? toBytes(opts.data) : new Uint8Array(0)
   if (opts.luaSource) {
     const bundle = await encodeMapBundle({
       module: {

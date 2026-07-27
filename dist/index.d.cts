@@ -53,6 +53,16 @@ interface SpawnOptions {
      * Include something unique (e.g. `name`) when you want a distinct process.
      */
     tags?: Tag[];
+    /**
+     * Spawn-message data. Our contracts use this to carry a MIGRATION SEED, which the
+     * runtime consumes at slot 0 and never again — that is what lets the published
+     * module stay pure source instead of embedding the dump. Embedding it cost a
+     * json.decode of the entire dump on every read (the module is reloaded into a
+     * fresh VM per read): measured 2.60s/read vs 0.43s, same resulting state.
+     *
+     * Ignored with `luaSource`, which already uses `data` for the inline bundle.
+     */
+    data?: string | Uint8Array;
 }
 interface SendOptions {
     /** Target process id. */
