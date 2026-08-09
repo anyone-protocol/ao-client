@@ -65,6 +65,31 @@ export interface SpawnOptions {
    * Ignored with `luaSource`, which already uses `data` for the inline bundle.
    */
   data?: string | Uint8Array
+  /**
+   * Force the process's FIRST COMPUTE and confirm it resolves before returning
+   * (default true, costing one extra GET).
+   *
+   * HyperBEAM computes LAZILY: `/push` only schedules slot 0, it does not run it. A process
+   * that has never computed still answers 200 on most reads — it just has no state — so a
+   * broken or unseeded spawn looks identical to a healthy one until something much later
+   * reads the wrong answer. `@permaweb/aoconnect` resolved `now` after a spawn for exactly
+   * this reason; that verification is restored here rather than left to each caller.
+   *
+   * Under the D32 globals state model this stopped being cosmetic: `as/<view>` does NOT
+   * drive slot 0, so without this a just-spawned process serves views from the contract's
+   * declared EMPTY shape — including a migrate-on-spawn seed, where a seed diff would then
+   * compare against nothing and look plausible.
+   *
+   * Set false only when you deliberately want the pre-compute window (a probe measuring it).
+   *
+   * ⚠️ This proves the process COMPUTES, not that a seed LANDED. For that use `materialize`,
+   * which additionally waits for the native runtime's `status.initialized`.
+   */
+  verify?: boolean
+  /** Attempts for the spawn verification above. Default 30. */
+  verifyAttempts?: number
+  /** Delay between verification attempts, ms. Default 500. */
+  verifyDelayMs?: number
 }
 
 export interface SendOptions {

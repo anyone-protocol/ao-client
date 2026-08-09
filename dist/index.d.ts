@@ -63,6 +63,31 @@ interface SpawnOptions {
      * Ignored with `luaSource`, which already uses `data` for the inline bundle.
      */
     data?: string | Uint8Array;
+    /**
+     * Force the process's FIRST COMPUTE and confirm it resolves before returning
+     * (default true, costing one extra GET).
+     *
+     * HyperBEAM computes LAZILY: `/push` only schedules slot 0, it does not run it. A process
+     * that has never computed still answers 200 on most reads — it just has no state — so a
+     * broken or unseeded spawn looks identical to a healthy one until something much later
+     * reads the wrong answer. `@permaweb/aoconnect` resolved `now` after a spawn for exactly
+     * this reason; that verification is restored here rather than left to each caller.
+     *
+     * Under the D32 globals state model this stopped being cosmetic: `as/<view>` does NOT
+     * drive slot 0, so without this a just-spawned process serves views from the contract's
+     * declared EMPTY shape — including a migrate-on-spawn seed, where a seed diff would then
+     * compare against nothing and look plausible.
+     *
+     * Set false only when you deliberately want the pre-compute window (a probe measuring it).
+     *
+     * ⚠️ This proves the process COMPUTES, not that a seed LANDED. For that use `materialize`,
+     * which additionally waits for the native runtime's `status.initialized`.
+     */
+    verify?: boolean;
+    /** Attempts for the spawn verification above. Default 30. */
+    verifyAttempts?: number;
+    /** Delay between verification attempts, ms. Default 500. */
+    verifyDelayMs?: number;
 }
 interface SendOptions {
     /** Target process id. */
@@ -175,18 +200,42 @@ declare function spawnProcess(config: AoConfig, opts: SpawnOptions): Promise<Spa
  * rejected the message, and repeating it just repeats the rejection.
  */
 declare function sendMessage(config: AoConfig, opts: SendOptions): Promise<SendResult>;
-/** Raw GET against a process path, e.g. `now/state/Claimed/0x…`. */
+/** Raw GET against a process path, e.g. `as/rewards?address=0x…` or `now/results/output/data`. */
 declare function readRaw(config: AoConfig, processId: string, path: string): Promise<string>;
 /**
- * Read a state key by base-addressing: `now/state/<key>`.
- * Point lookups (`state/Rewarded/<hodler>/<operator>`) are free — no view code.
- */
-declare function readState(config: AoConfig, processId: string, key: string): Promise<string>;
-/**
- * Invoke a contract view: `now/~lua@5.3a/<name>[?params]`, parsed as JSON.
+ * Invoke a contract view: `as/<name>[?params]`, parsed as JSON.
  * This is the replacement for a `dryrun` carrying an `Action` tag.
+ *
+ * ⚠️ `as/`, NOT `now/~lua@5.3a/` — this is load-bearing, not cosmetic (D31 §5a, measured).
+ * `now` resolves FIRST and hands the lua device a priv-stripped result message, so the device
+ * re-initialises a FRESH VM from the module: the view function is present and callable, but
+ * every data global is nil, and the view answers 200 with empty state. `as/` goes through
+ * `dev_process:as/3` -> `ensure_loaded`, applying the execution device to the LOADED process,
+ * so the view runs against the restored VM that actually holds the state. It advances to the
+ * latest slot, so it is not a stale read.
+ *
+ * ⚠️ ONE EXCEPTION, and it only bites right after a spawn: HyperBEAM computes LAZILY, and `as/`
+ * does not drive SLOT 0. A process that has never computed holds no state at all, so its views
+ * answer from the contract's declared (empty) shape — a plausible-looking 200 that is simply
+ * not the seed. Touching any `now/` key forces the schedule to run; `materialize` below does
+ * exactly that, once. Steady-state reads do not need it — `as/` picks up later slots by itself.
  */
 declare function readView<T = unknown>(config: AoConfig, processId: string, name: string, params?: ViewParams): Promise<T>;
+/**
+ * Force a freshly spawned process to compute, and wait until it has.
+ *
+ * Call once after `spawnProcess`, before reading any view. HyperBEAM's compute is lazy and
+ * `as/` does not drive slot 0, so without this a just-spawned process serves views from the
+ * contract's declared empty shape — including a migrate-on-spawn seed, which is the dangerous
+ * case: a seed diff would compare against empty and either fail confusingly or, worse, look
+ * plausible. Reading any `now/` key resolves the schedule and runs the pending slot.
+ *
+ * Returns the process's `status` view once it reports `initialized`. Throws if it never does.
+ */
+declare function materialize<T = unknown>(config: AoConfig, processId: string, opts?: {
+    attempts?: number;
+    delayMs?: number;
+}): Promise<T>;
 /** Slot output of a specific message, for reads served from a settle slot. */
 declare function readSlotOutput(config: AoConfig, processId: string, slot: string | number): Promise<string>;
 
@@ -195,9 +244,13 @@ interface AoClient {
     fetchNodeAddress(): Promise<string>;
     spawnProcess(opts: SpawnOptions): Promise<SpawnResult>;
     sendMessage(opts: SendOptions): Promise<SendResult>;
-    readState(processId: string, key: string): Promise<string>;
     readView<T = unknown>(processId: string, name: string, params?: ViewParams): Promise<T>;
     readSlotOutput(processId: string, slot: string | number): Promise<string>;
+    /** Force a just-spawned process to compute (lazy eval); resolves once initialized. */
+    materialize<T = unknown>(processId: string, opts?: {
+        attempts?: number;
+        delayMs?: number;
+    }): Promise<T>;
     readRaw(processId: string, path: string): Promise<string>;
 }
 /** Bind a config once; every method below is the free function with it applied. */
@@ -212,4 +265,4 @@ declare function createAoClient(config: AoConfig): AoClient;
  */
 declare function nodeUrlFromEnv(env?: Record<string, string | undefined>, varName?: string): string;
 
-export { type AoClient, type AoConfig, AoContractError, AoHttpError, AoNotFoundError, AoValidationError, type Logger, type SendOptions, type SendResult, type SigningConfig, type SpawnOptions, type SpawnResult, type Tag, type ViewParams, createAoClient, fetchNodeAddress, isRetryable, moduleIdFor, nodeUrlFromEnv, readRaw, readSlotOutput, readState, readView, sendMessage, spawnProcess };
+export { type AoClient, type AoConfig, AoContractError, AoHttpError, AoNotFoundError, AoValidationError, type Logger, type SendOptions, type SendResult, type SigningConfig, type SpawnOptions, type SpawnResult, type Tag, type ViewParams, createAoClient, fetchNodeAddress, isRetryable, materialize, moduleIdFor, nodeUrlFromEnv, readRaw, readSlotOutput, readView, sendMessage, spawnProcess };

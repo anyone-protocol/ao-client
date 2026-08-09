@@ -165,10 +165,43 @@ export async function spawnProcess (
   // identical content yields the same id, but a retry after a partially-applied
   // spawn is not something we want to paper over silently.
   const { id, res } = await postAns104(config, '/push', { tags, data })
-  return {
-    processId: res.headers.get('process') ?? id,
-    slot: res.headers.get('slot'),
+  const processId = res.headers.get('process') ?? id
+  // `/push` only SCHEDULES slot 0 — HyperBEAM computes lazily. Force it and confirm the
+  // process resolves, so a spawn that cannot compute fails HERE rather than as a puzzling
+  // empty read later. See SpawnOptions.verify.
+  if (opts.verify !== false) {
+    await forceFirstCompute(config, processId,
+      { attempts: opts.verifyAttempts, delayMs: opts.verifyDelayMs })
   }
+  return { processId, slot: res.headers.get('slot') }
+}
+
+/**
+ * Resolve `now/at-slot` until the node answers, which is what drives a lazily-scheduled
+ * slot 0 to actually run. Returns the slot.
+ *
+ * Any `now/` read forces the schedule; `at-slot` is the cheapest and is present on every
+ * process regardless of execution device, so this stays contract-agnostic — it must not
+ * depend on a `status` view that only our native runtime has.
+ */
+async function forceFirstCompute (
+  config: AoConfig,
+  processId: string,
+  opts: { attempts?: number, delayMs?: number } = {}
+): Promise<string> {
+  const attempts = opts.attempts ?? 30
+  const delayMs = opts.delayMs ?? 500
+  let last: unknown = null
+  for (let i = 0; i < attempts; i++) {
+    try {
+      return (await readRaw(config, processId, 'now/at-slot')).trim()
+    } catch (e) { last = e }
+    if (i < attempts - 1) await new Promise(r => setTimeout(r, delayMs))
+  }
+  throw new Error(
+    `ao-client: spawned ${processId} but it never computed after ${attempts} attempts ` +
+    `(last: ${String((last as Error)?.message ?? last).slice(0, 200)})`
+  )
 }
 
 /**
@@ -239,7 +272,7 @@ function parseContractError (output: string): string | null {
 // new slot. This is what replaces every `dryrun` call site.
 // ---------------------------------------------------------------------------
 
-/** Raw GET against a process path, e.g. `now/state/Claimed/0x…`. */
+/** Raw GET against a process path, e.g. `as/rewards?address=0x…` or `now/results/output/data`. */
 export async function readRaw (
   config: AoConfig,
   processId: string,
@@ -258,21 +291,22 @@ export async function readRaw (
 }
 
 /**
- * Read a state key by base-addressing: `now/state/<key>`.
- * Point lookups (`state/Rewarded/<hodler>/<operator>`) are free — no view code.
- */
-export function readState (
-  config: AoConfig,
-  processId: string,
-  key: string
-): Promise<string> {
-  return withRetry(config, `read state/${key}`, () =>
-    readRaw(config, processId, `now/state/${key.replace(/^\/+/, '')}`))
-}
-
-/**
- * Invoke a contract view: `now/~lua@5.3a/<name>[?params]`, parsed as JSON.
+ * Invoke a contract view: `as/<name>[?params]`, parsed as JSON.
  * This is the replacement for a `dryrun` carrying an `Action` tag.
+ *
+ * ⚠️ `as/`, NOT `now/~lua@5.3a/` — this is load-bearing, not cosmetic (D31 §5a, measured).
+ * `now` resolves FIRST and hands the lua device a priv-stripped result message, so the device
+ * re-initialises a FRESH VM from the module: the view function is present and callable, but
+ * every data global is nil, and the view answers 200 with empty state. `as/` goes through
+ * `dev_process:as/3` -> `ensure_loaded`, applying the execution device to the LOADED process,
+ * so the view runs against the restored VM that actually holds the state. It advances to the
+ * latest slot, so it is not a stale read.
+ *
+ * ⚠️ ONE EXCEPTION, and it only bites right after a spawn: HyperBEAM computes LAZILY, and `as/`
+ * does not drive SLOT 0. A process that has never computed holds no state at all, so its views
+ * answer from the contract's declared (empty) shape — a plausible-looking 200 that is simply
+ * not the seed. Touching any `now/` key forces the schedule to run; `materialize` below does
+ * exactly that, once. Steady-state reads do not need it — `as/` picks up later slots by itself.
  */
 export async function readView<T = unknown> (
   config: AoConfig,
@@ -286,7 +320,7 @@ export async function readView<T = unknown> (
       ).toString()
     : ''
   return withRetry(config, `read view ${name}`, async () => {
-    const body = await readRaw(config, processId, `now/~lua@5.3a/${name}${query}`)
+    const body = await readRaw(config, processId, `as/${name}${query}`)
     try {
       return JSON.parse(body) as T
     } catch {
@@ -297,6 +331,48 @@ export async function readView<T = unknown> (
       )
     }
   })
+}
+
+/**
+ * Force a freshly spawned process to compute, and wait until it has.
+ *
+ * Call once after `spawnProcess`, before reading any view. HyperBEAM's compute is lazy and
+ * `as/` does not drive slot 0, so without this a just-spawned process serves views from the
+ * contract's declared empty shape — including a migrate-on-spawn seed, which is the dangerous
+ * case: a seed diff would compare against empty and either fail confusingly or, worse, look
+ * plausible. Reading any `now/` key resolves the schedule and runs the pending slot.
+ *
+ * Returns the process's `status` view once it reports `initialized`. Throws if it never does.
+ */
+export async function materialize<T = unknown> (
+  config: AoConfig,
+  processId: string,
+  opts: { attempts?: number, delayMs?: number } = {}
+): Promise<T> {
+  const attempts = opts.attempts ?? 30
+  const delayMs = opts.delayMs ?? 1000
+  let last: unknown = null
+  for (let i = 0; i < attempts; i++) {
+    // The `now/` read is the part that does the work — it forces the pending slot to compute.
+    // `spawnProcess` already does this, so for a process spawned through this client the loop
+    // normally exits on its first pass; this stays for pids obtained some other way.
+    await forceFirstCompute(config, processId, { attempts: 1 }).catch(() => '')
+    try {
+      const status = await readView<{ initialized?: boolean }>(config, processId, 'status')
+      last = status
+      // `initialized` distinguishes "computed and genuinely empty" from "has never computed";
+      // the counts cannot, because both answer zero. Contracts predating it are treated as
+      // materialized the moment status answers at all.
+      if (status?.initialized !== false) return status as T
+    } catch (e) {
+      last = e
+    }
+    if (i < attempts - 1) await new Promise(r => setTimeout(r, delayMs))
+  }
+  throw new Error(
+    `ao-client: ${processId} did not materialize after ${attempts} attempts ` +
+    `(last: ${JSON.stringify(last)?.slice(0, 200)})`
+  )
 }
 
 /** Slot output of a specific message, for reads served from a settle slot. */

@@ -277,10 +277,31 @@ async function spawnProcess(config, opts) {
     data = bundle.data;
   }
   const { id, res } = await postAns104(config, "/push", { tags, data });
-  return {
-    processId: res.headers.get("process") ?? id,
-    slot: res.headers.get("slot")
-  };
+  const processId = res.headers.get("process") ?? id;
+  if (opts.verify !== false) {
+    await forceFirstCompute(
+      config,
+      processId,
+      { attempts: opts.verifyAttempts, delayMs: opts.verifyDelayMs }
+    );
+  }
+  return { processId, slot: res.headers.get("slot") };
+}
+async function forceFirstCompute(config, processId, opts = {}) {
+  const attempts = opts.attempts ?? 30;
+  const delayMs = opts.delayMs ?? 500;
+  let last = null;
+  for (let i = 0; i < attempts; i++) {
+    try {
+      return (await readRaw(config, processId, "now/at-slot")).trim();
+    } catch (e) {
+      last = e;
+    }
+    if (i < attempts - 1) await new Promise((r) => setTimeout(r, delayMs));
+  }
+  throw new Error(
+    `ao-client: spawned ${processId} but it never computed after ${attempts} attempts (last: ${String(last?.message ?? last).slice(0, 200)})`
+  );
 }
 async function sendMessage(config, opts) {
   requireSigner(config);
@@ -337,15 +358,12 @@ async function readRaw(config, processId, path) {
     throw e;
   }
 }
-function readState(config, processId, key) {
-  return withRetry(config, `read state/${key}`, () => readRaw(config, processId, `now/state/${key.replace(/^\/+/, "")}`));
-}
 async function readView(config, processId, name, params) {
   const query = params && Object.keys(params).length ? "?" + new URLSearchParams(
     Object.entries(params).map(([k, v]) => [k, String(v)])
   ).toString() : "";
   return withRetry(config, `read view ${name}`, async () => {
-    const body = await readRaw(config, processId, `now/~lua@5.3a/${name}${query}`);
+    const body = await readRaw(config, processId, `as/${name}${query}`);
     try {
       return JSON.parse(body);
     } catch {
@@ -354,6 +372,25 @@ async function readView(config, processId, name, params) {
       );
     }
   });
+}
+async function materialize(config, processId, opts = {}) {
+  const attempts = opts.attempts ?? 30;
+  const delayMs = opts.delayMs ?? 1e3;
+  let last = null;
+  for (let i = 0; i < attempts; i++) {
+    await forceFirstCompute(config, processId, { attempts: 1 }).catch(() => "");
+    try {
+      const status = await readView(config, processId, "status");
+      last = status;
+      if (status?.initialized !== false) return status;
+    } catch (e) {
+      last = e;
+    }
+    if (i < attempts - 1) await new Promise((r) => setTimeout(r, delayMs));
+  }
+  throw new Error(
+    `ao-client: ${processId} did not materialize after ${attempts} attempts (last: ${JSON.stringify(last)?.slice(0, 200)})`
+  );
 }
 function readSlotOutput(config, processId, slot) {
   return withRetry(config, `read slot ${slot}`, () => readRaw(config, processId, `compute&slot=${slot}/results/output/data`));
@@ -366,9 +403,9 @@ function createAoClient(config) {
     fetchNodeAddress: () => fetchNodeAddress(config),
     spawnProcess: (opts) => spawnProcess(config, opts),
     sendMessage: (opts) => sendMessage(config, opts),
-    readState: (processId, key) => readState(config, processId, key),
     readView: (processId, name, params) => readView(config, processId, name, params),
     readSlotOutput: (processId, slot) => readSlotOutput(config, processId, slot),
+    materialize: (processId, opts) => materialize(config, processId, opts),
     readRaw: (processId, path) => readRaw(config, processId, path)
   };
 }
@@ -392,11 +429,11 @@ export {
   createAoClient,
   fetchNodeAddress,
   isRetryable,
+  materialize,
   moduleIdFor,
   nodeUrlFromEnv,
   readRaw,
   readSlotOutput,
-  readState,
   readView,
   sendMessage,
   spawnProcess

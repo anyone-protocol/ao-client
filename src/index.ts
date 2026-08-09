@@ -17,7 +17,7 @@
  *                          tags: [{ name: 'round-timestamp', value: String(ts) }] })
  */
 import {
-  fetchNodeAddress, readRaw, readSlotOutput, readState, readView, sendMessage,
+  fetchNodeAddress, materialize, readRaw, readSlotOutput, readView, sendMessage,
   spawnProcess,
 } from './client.js'
 import { AoValidationError } from './errors.js'
@@ -32,7 +32,7 @@ export * from './types.js'
 // error class cannot silently fail to reach consumers.
 export * from './errors.js'
 export {
-  fetchNodeAddress, moduleIdFor, readRaw, readSlotOutput, readState, readView,
+  fetchNodeAddress, materialize, moduleIdFor, readRaw, readSlotOutput, readView,
   sendMessage, spawnProcess,
 } from './client.js'
 
@@ -41,9 +41,10 @@ export interface AoClient {
   fetchNodeAddress(): Promise<string>
   spawnProcess(opts: SpawnOptions): Promise<SpawnResult>
   sendMessage(opts: SendOptions): Promise<SendResult>
-  readState(processId: string, key: string): Promise<string>
   readView<T = unknown>(processId: string, name: string, params?: ViewParams): Promise<T>
   readSlotOutput(processId: string, slot: string | number): Promise<string>
+  /** Force a just-spawned process to compute (lazy eval); resolves once initialized. */
+  materialize<T = unknown>(processId: string, opts?: { attempts?: number, delayMs?: number }): Promise<T>
   readRaw(processId: string, path: string): Promise<string>
 }
 
@@ -54,9 +55,9 @@ export function createAoClient (config: AoConfig): AoClient {
     fetchNodeAddress: () => fetchNodeAddress(config),
     spawnProcess: opts => spawnProcess(config, opts),
     sendMessage: opts => sendMessage(config, opts),
-    readState: (processId, key) => readState(config, processId, key),
     readView: (processId, name, params) => readView(config, processId, name, params),
     readSlotOutput: (processId, slot) => readSlotOutput(config, processId, slot),
+    materialize: (processId, opts) => materialize(config, processId, opts),
     readRaw: (processId, path) => readRaw(config, processId, path),
   }
 }

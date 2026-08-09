@@ -56,9 +56,9 @@ const ao = createAoClient({
   logger,                           // optional
 })
 
-// read
+// read — every read is a view. Contract state lives in a Lua global (D32), so there is
+// no addressable `now/state/<key>` any more; a point lookup is a view with a parameter.
 const state = await ao.readView(processId, 'dump')
-const owed  = await ao.readState(processId, `Rewarded/${hodler}/${operator}`)
 const mine  = await ao.readView(processId, 'rewards', { address })
 
 // write — throws if the contract rejects it
@@ -88,20 +88,23 @@ package throws rather than let you produce a message that fails signature
 re-verification on a later read.
 
 **Reads** do not map one-to-one, because `dryrun` no longer exists. Each legacy
-`Action` becomes a view or a base-addressed key:
+`Action` becomes a **view** — including point lookups, which take a parameter rather than a
+path (contract state is a Lua global, not a message key):
 
 | Legacy `dryrun` Action | Native read |
 | --- | --- |
-| `View-State` | `readView(pid, 'dump')`, or a targeted `readState` — a full-state pull is rarely what you want |
+| `View-State` | `readView(pid, 'dump')` — admin/seed-diff only; a full-state pull is rarely what you want |
 | `Last-Snapshot` | `readView(pid, 'last_snapshot')` |
 | `Last-Round-Metadata` | `readView(pid, 'last_round')` |
 | `Last-Round-Data` | staking: `readView(pid, 'last_round_data', { address })` · relay: read the settle slot (D27 W-D) |
 | `Get-Rewards` | `readView(pid, 'rewards', { address })` |
-| `Get-Claimed` | `readView(pid, 'claimed', { address })` or `readState(pid, \`Claimed/${addr}\`)` |
+| `Get-Claimed` | `readView(pid, 'claimed', { address })` |
 | `Balance` | **delete** — the AO token integration is out of scope (D17) |
 
-Point lookups are free via base-addressing and need no view:
-`readState(pid, 'TotalFingerprintReward/<fp>')`.
+Point lookups go through a view too: `readView(pid, 'rewards', { fingerprint })`. This is not
+a workaround — a view read measured **27.6 ms against 148 ms** for the base-addressed read it
+replaces, because the state is already live in the VM when the view runs. Doing the work inside
+Lua and returning little is the cheap direction.
 
 ## Design notes
 
