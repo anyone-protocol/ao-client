@@ -132,6 +132,15 @@ export async function spawnProcess (
   if (!opts.moduleId === !opts.luaSource) {
     throw new AoValidationError('exactly one of `moduleId` or `luaSource` is required')
   }
+  // An inline-source spawn encodes the module INTO the data field, so it cannot also carry
+  // spawn data there — it would be silently discarded and the process would come up without
+  // its seed while every call reported success. Seeding requires a module-id spawn.
+  if (opts.luaSource && opts.data) {
+    throw new AoValidationError(
+      '`data` cannot be combined with `luaSource`: the inline module occupies the data field, ' +
+      'so the spawn data would be discarded. Publish the module and spawn by `moduleId`.'
+    )
+  }
   const schedulerLocation =
     opts.schedulerLocation ?? await fetchNodeAddress(config)
   const processTags: Tag[] = [
