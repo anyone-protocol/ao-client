@@ -67,7 +67,7 @@ interface SpawnOptions {
      * Force the process's FIRST COMPUTE and confirm it resolves before returning
      * (default true, costing one extra GET).
      *
-     * HyperBEAM computes LAZILY: `/push` only schedules slot 0, it does not run it. A process
+     * HyperBEAM computes LAZILY: a spawn only schedules slot 0, it does not run it. A process
      * that has never computed still answers 200 on most reads — it just has no state — so a
      * broken or unseeded spawn looks identical to a healthy one until something much later
      * reads the wrong answer. `@permaweb/aoconnect` resolved `now` after a spawn for exactly

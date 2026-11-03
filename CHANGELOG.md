@@ -4,6 +4,19 @@ Consumers pin this package by GIT TAG (`github:anyone-protocol/ao-client#vX.Y.Z`
 release is: bump the version here and in `package.json`, `npm run build` (dist/ is committed
 on purpose — see `.gitignore`), commit, tag, push the tag.
 
+## v0.1.4
+
+### Changed
+
+- **`spawnProcess` posts to `/~scheduler@1.0/schedule` instead of `/push`.** HyperBEAM v0.11
+  answers `POST /push` with 404. Messages still go to `/<pid>~process@1.0/push`.
+- `spawnProcess` rejects `data` passed alongside inline `luaSource`, since the inline module
+  occupies the data field.
+
+### Added
+
+- `docs/wire-format.md`, the signed message layout the client produces.
+
 ## v0.1.3
 
 Follows the contract-side move of state into Lua globals (D32). Nothing is deployed anywhere

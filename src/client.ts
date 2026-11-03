@@ -173,9 +173,9 @@ export async function spawnProcess (
   // A spawn is NOT retried: secp256k1 signing is deterministic, so a retry of
   // identical content yields the same id, but a retry after a partially-applied
   // spawn is not something we want to paper over silently.
-  const { id, res } = await postAns104(config, '/push', { tags, data })
+  const { id, res } = await postAns104(config, '/~scheduler@1.0/schedule', { tags, data })
   const processId = res.headers.get('process') ?? id
-  // `/push` only SCHEDULES slot 0 — HyperBEAM computes lazily. Force it and confirm the
+  // A spawn only SCHEDULES slot 0 — HyperBEAM computes lazily. Force it and confirm the
   // process resolves, so a spawn that cannot compute fails HERE rather than as a puzzling
   // empty read later. See SpawnOptions.verify.
   if (opts.verify !== false) {
