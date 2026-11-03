@@ -250,6 +250,11 @@ async function spawnProcess(config, opts) {
   if (!opts.moduleId === !opts.luaSource) {
     throw new AoValidationError("exactly one of `moduleId` or `luaSource` is required");
   }
+  if (opts.luaSource && opts.data) {
+    throw new AoValidationError(
+      "`data` cannot be combined with `luaSource`: the inline module occupies the data field, so the spawn data would be discarded. Publish the module and spawn by `moduleId`."
+    );
+  }
   const schedulerLocation = opts.schedulerLocation ?? await fetchNodeAddress(config);
   const processTags = [
     { name: "device", value: "process@1.0" },
@@ -276,7 +281,7 @@ async function spawnProcess(config, opts) {
     tags = [...bundle.bundleTags, ...processTags];
     data = bundle.data;
   }
-  const { id, res } = await postAns104(config, "/push", { tags, data });
+  const { id, res } = await postAns104(config, "/~scheduler@1.0/schedule", { tags, data });
   const processId = res.headers.get("process") ?? id;
   if (opts.verify !== false) {
     await forceFirstCompute(
