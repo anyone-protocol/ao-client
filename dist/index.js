@@ -232,7 +232,8 @@ async function postAns104(config, path, opts) {
   assertTagsWellFormed(opts.tags);
   const item = createData(opts.data, config.signer, {
     tags: opts.tags,
-    ...opts.target ? { target: opts.target } : {}
+    ...opts.target ? { target: opts.target } : {},
+    ...opts.anchor ? { anchor: opts.anchor } : {}
   });
   await item.sign(config.signer);
   const { res, body } = await request(config, "POST", path, {
@@ -319,11 +320,12 @@ async function sendMessage(config, opts) {
     ...opts.action ? [{ name: "action", value: opts.action }] : [],
     ...opts.tags ?? []
   ];
+  const anchor = base64url(globalThis.crypto.getRandomValues(new Uint8Array(24)));
   const sent = await withRetry(config, `send ${opts.action ?? "message"}`, async () => {
     const { id, res, body } = await postAns104(
       config,
       `/${opts.processId}~process@1.0/push`,
-      { tags, data: opts.data ?? "", target: opts.processId }
+      { tags, data: opts.data ?? "", target: opts.processId, anchor }
     );
     let slot = res.headers.get("slot");
     if (slot === null) {
@@ -341,13 +343,19 @@ async function sendMessage(config, opts) {
     );
     return sent;
   }
-  const output = (await readSlotOutput(config, opts.processId, sent.slot)).trim();
+  let output = (await readSlotOutput(config, opts.processId, sent.slot)).trim();
+  const first = DUPLICATE.exec(output)?.[1];
+  if (first !== void 0) {
+    sent.slot = first;
+    output = (await readSlotOutput(config, opts.processId, first)).trim();
+  }
   const reason = parseContractError(output);
   if (reason !== null) {
     throw new AoContractError(reason, opts.processId, sent.slot, opts.action);
   }
   return { ...sent, output };
 }
+var DUPLICATE = /^error:\s*duplicate message \(slot (\d+)\)$/i;
 function parseContractError(output) {
   return /^error:\s*/i.test(output) ? output.replace(/^error:\s*/i, "") : null;
 }

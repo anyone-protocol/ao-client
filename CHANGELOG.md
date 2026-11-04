@@ -4,6 +4,17 @@ Consumers pin this package by GIT TAG (`github:anyone-protocol/ao-client#vX.Y.Z`
 release is: bump the version here and in `package.json`, `npm run build` (dist/ is committed
 on purpose — see `.gitignore`), commit, tag, push the tag.
 
+## v0.1.5
+
+### Changed
+
+- **`sendMessage` signs each call with a random anchor.** The native runtime skips a message
+  id it has already processed, and signing is deterministic, so without an anchor two sends
+  of the same content would be one message. Retries within a call keep the anchor.
+- When the runtime reports `error: duplicate message (slot <n>)`, `sendMessage` returns slot
+  `<n>` and its output. That is the case of a retry whose first attempt landed but whose
+  response was lost.
+
 ## v0.1.4
 
 ### Changed

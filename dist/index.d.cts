@@ -110,7 +110,10 @@ interface SendOptions {
 interface SendResult {
     /** The signed DataItem id of the message. */
     id: string;
-    /** Assigned slot, when the node reports one. */
+    /**
+     * Assigned slot, when the node reports one. For a retry whose first attempt had
+     * already landed, the slot of that first attempt.
+     */
     slot: string | null;
     /** Raw push response body (the signed assignment). */
     body: string;
@@ -198,6 +201,11 @@ declare function spawnProcess(config: AoConfig, opts: SpawnOptions): Promise<Spa
  *
  * Retried on transport/5xx failures only — a 4xx means the node or the contract
  * rejected the message, and repeating it just repeats the rejection.
+ *
+ * Each call signs with a fresh random anchor, and its retries resend the same bytes.
+ * The runtime skips a message id it has already processed, so distinct calls never
+ * collide, and a retry whose first attempt already landed reports that attempt's slot
+ * and output.
  */
 declare function sendMessage(config: AoConfig, opts: SendOptions): Promise<SendResult>;
 /** Raw GET against a process path, e.g. `as/rewards?address=0x…` or `now/results/output/data`. */

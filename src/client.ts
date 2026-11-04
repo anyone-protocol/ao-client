@@ -83,12 +83,13 @@ async function request (
 async function postAns104 (
   config: SigningConfig,
   path: string,
-  opts: { tags: Tag[], data: string | Uint8Array, target?: string }
+  opts: { tags: Tag[], data: string | Uint8Array, target?: string, anchor?: string }
 ) {
   assertTagsWellFormed(opts.tags)
   const item = createData(opts.data as never, config.signer, {
     tags: opts.tags,
     ...(opts.target ? { target: opts.target } : {}),
+    ...(opts.anchor ? { anchor: opts.anchor } : {}),
   })
   await item.sign(config.signer)
   const { res, body } = await request(config, 'POST', path, {
@@ -218,6 +219,11 @@ async function forceFirstCompute (
  *
  * Retried on transport/5xx failures only — a 4xx means the node or the contract
  * rejected the message, and repeating it just repeats the rejection.
+ *
+ * Each call signs with a fresh random anchor, and its retries resend the same bytes.
+ * The runtime skips a message id it has already processed, so distinct calls never
+ * collide, and a retry whose first attempt already landed reports that attempt's slot
+ * and output.
  */
 export async function sendMessage (
   config: AoConfig,
@@ -233,11 +239,12 @@ export async function sendMessage (
     ...(opts.action ? [{ name: 'action', value: opts.action }] : []),
     ...(opts.tags ?? []),
   ]
+  const anchor = base64url(globalThis.crypto.getRandomValues(new Uint8Array(24)))
   const sent = await withRetry(config, `send ${opts.action ?? 'message'}`, async () => {
     const { id, res, body } = await postAns104(
       config,
       `/${opts.processId}~process@1.0/push`,
-      { tags, data: opts.data ?? '', target: opts.processId }
+      { tags, data: opts.data ?? '', target: opts.processId, anchor }
     )
     let slot = res.headers.get('slot')
     if (slot === null) {
@@ -258,13 +265,21 @@ export async function sendMessage (
     )
     return sent
   }
-  const output = (await readSlotOutput(config, opts.processId, sent.slot)).trim()
+  let output = (await readSlotOutput(config, opts.processId, sent.slot)).trim()
+  const first = DUPLICATE.exec(output)?.[1]
+  if (first !== undefined) {
+    sent.slot = first
+    output = (await readSlotOutput(config, opts.processId, first)).trim()
+  }
   const reason = parseContractError(output)
   if (reason !== null) {
     throw new AoContractError(reason, opts.processId, sent.slot, opts.action)
   }
   return { ...sent, output }
 }
+
+/** The runtime's output for a message id it has already processed, naming the first slot. */
+const DUPLICATE = /^error:\s*duplicate message \(slot (\d+)\)$/i
 
 /**
  * A rejected handler yields `error: <reason>` as the slot's output — the runtime

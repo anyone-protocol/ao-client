@@ -114,7 +114,10 @@ export interface SendOptions {
 export interface SendResult {
   /** The signed DataItem id of the message. */
   id: string
-  /** Assigned slot, when the node reports one. */
+  /**
+   * Assigned slot, when the node reports one. For a retry whose first attempt had
+   * already landed, the slot of that first attempt.
+   */
   slot: string | null
   /** Raw push response body (the signed assignment). */
   body: string

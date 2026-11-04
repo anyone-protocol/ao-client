@@ -1,6 +1,6 @@
 {
   "name": "@anyone-protocol/ao-client",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "description": "HyperBEAM-native AO client for Anyone Protocol — ANS-104/EVM-signed writes and plain-HTTP reads against our own node. Replaces @permaweb/aoconnect and the seven divergent send-aos-message.ts copies.",
   "license": "AGPL-3.0-only",
   "contributors": [
