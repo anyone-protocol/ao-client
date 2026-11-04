@@ -152,6 +152,9 @@ npm run build
 HB_URL=http://localhost:8734 MODULE_ID=<seed module id> bun run scripts/smoke.ts
 ```
 
+CI runs the typecheck and the build, and fails when the committed `dist/` differs from a
+fresh build.
+
 The smoke test is the one that matters: a typecheck proves nothing about ANS-104 byte
 layout, tag ordering, or signature round-tripping. It drives every verb against a real
 node and asserts a contract rejection surfaces as an error.
