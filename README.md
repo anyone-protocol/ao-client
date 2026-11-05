@@ -126,9 +126,11 @@ latest slot, so under a concurrent writer it would report someone else's result.
 **Every send is a distinct message.** The native runtime skips a message id it has
 already processed. secp256k1 signing is deterministic, so two sends of the same content
 would otherwise share an id, and the second would be skipped. `sendMessage` signs each call
-with a fresh random anchor, and a retry within the call resends the same bytes. When a
-retry finds its first attempt already landed, the runtime answers
+once, with a fresh random anchor, and a retry within the call resends the same signed bytes.
+When a retry finds its first attempt already landed, the runtime answers
 `error: duplicate message (slot <n>)`, and `sendMessage` returns slot `<n>` and its output.
+If the contract rejected the message at slot `<n>`, `sendMessage` throws `AoContractError`
+for slot `<n>`.
 
 **Only transport failures are retried.** A 4xx, a missing key, a malformed tag and a
 contract rejection are all deterministic; repeating them wastes time and prints the
