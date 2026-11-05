@@ -288,7 +288,7 @@ async function postAns104(config, path, item) {
 function slotFromBody(body) {
   try {
     const slot = JSON.parse(body)?.slot;
-    if (typeof slot === "number" && Number.isInteger(slot) && slot >= 0) return String(slot);
+    if (typeof slot === "number" && Number.isSafeInteger(slot) && slot >= 0) return String(slot);
     if (typeof slot === "string" && /^\d+$/.test(slot)) return slot;
   } catch {
   }

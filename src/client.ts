@@ -107,7 +107,7 @@ async function postAns104 (config: AoConfig, path: string, item: DataItem) {
 function slotFromBody (body: string): string | null {
   try {
     const slot: unknown = JSON.parse(body)?.slot
-    if (typeof slot === 'number' && Number.isInteger(slot) && slot >= 0) return String(slot)
+    if (typeof slot === 'number' && Number.isSafeInteger(slot) && slot >= 0) return String(slot)
     if (typeof slot === 'string' && /^\d+$/.test(slot)) return slot
   } catch { /* not JSON */ }
   return null
