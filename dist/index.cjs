@@ -268,18 +268,31 @@ async function request(config, method, path, init) {
     clearTimeout(timer);
   }
 }
-async function postAns104(config, path, opts) {
+async function signAns104(config, opts) {
   assertTagsWellFormed(opts.tags);
   const item = (0, import_web2.createData)(opts.data, config.signer, {
     tags: opts.tags,
-    ...opts.target ? { target: opts.target } : {}
+    ...opts.target ? { target: opts.target } : {},
+    ...opts.anchor ? { anchor: opts.anchor } : {}
   });
   await item.sign(config.signer);
+  return item;
+}
+async function postAns104(config, path, item) {
   const { res, body } = await request(config, "POST", path, {
     headers: ANS104_HEADERS,
     body: item.getRaw()
   });
   return { id: item.id, res, body };
+}
+function slotFromBody(body) {
+  try {
+    const slot = JSON.parse(body)?.slot;
+    if (typeof slot === "number" && Number.isSafeInteger(slot) && slot >= 0) return String(slot);
+    if (typeof slot === "string" && /^\d+$/.test(slot)) return slot;
+  } catch {
+  }
+  return null;
 }
 async function fetchNodeAddress(config) {
   const { body } = await request(config, "GET", "/~meta@1.0/info/address");
@@ -321,7 +334,8 @@ async function spawnProcess(config, opts) {
     tags = [...bundle.bundleTags, ...processTags];
     data = bundle.data;
   }
-  const { id, res } = await postAns104(config, "/~scheduler@1.0/schedule", { tags, data });
+  const item = await signAns104(config, { tags, data });
+  const { id, res } = await postAns104(config, "/~scheduler@1.0/schedule", item);
   const processId = res.headers.get("process") ?? id;
   if (opts.verify !== false) {
     await forceFirstCompute(
@@ -359,20 +373,20 @@ async function sendMessage(config, opts) {
     ...opts.action ? [{ name: "action", value: opts.action }] : [],
     ...opts.tags ?? []
   ];
+  const anchor = base64url(globalThis.crypto.getRandomValues(new Uint8Array(24)));
+  const item = await signAns104(config, {
+    tags,
+    data: opts.data ?? "",
+    target: opts.processId,
+    anchor
+  });
   const sent = await withRetry(config, `send ${opts.action ?? "message"}`, async () => {
     const { id, res, body } = await postAns104(
       config,
       `/${opts.processId}~process@1.0/push`,
-      { tags, data: opts.data ?? "", target: opts.processId }
+      item
     );
-    let slot = res.headers.get("slot");
-    if (slot === null) {
-      try {
-        slot = String(JSON.parse(body).slot);
-      } catch {
-      }
-    }
-    return { id, slot, body };
+    return { id, slot: res.headers.get("slot") ?? slotFromBody(body), body };
   });
   if (opts.confirm === false) return sent;
   if (sent.slot === null) {
@@ -381,13 +395,19 @@ async function sendMessage(config, opts) {
     );
     return sent;
   }
-  const output = (await readSlotOutput(config, opts.processId, sent.slot)).trim();
+  let output = (await readSlotOutput(config, opts.processId, sent.slot)).trim();
+  const first = DUPLICATE.exec(output)?.[1];
+  if (first !== void 0) {
+    sent.slot = first;
+    output = (await readSlotOutput(config, opts.processId, first)).trim();
+  }
   const reason = parseContractError(output);
   if (reason !== null) {
     throw new AoContractError(reason, opts.processId, sent.slot, opts.action);
   }
   return { ...sent, output };
 }
+var DUPLICATE = /^error:\s*duplicate message \(slot (\d+)\)$/i;
 function parseContractError(output) {
   return /^error:\s*/i.test(output) ? output.replace(/^error:\s*/i, "") : null;
 }

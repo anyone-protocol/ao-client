@@ -80,22 +80,37 @@ async function request (
   }
 }
 
-async function postAns104 (
+type DataItem = ReturnType<typeof createData>
+
+async function signAns104 (
   config: SigningConfig,
-  path: string,
-  opts: { tags: Tag[], data: string | Uint8Array, target?: string }
-) {
+  opts: { tags: Tag[], data: string | Uint8Array, target?: string, anchor?: string }
+): Promise<DataItem> {
   assertTagsWellFormed(opts.tags)
   const item = createData(opts.data as never, config.signer, {
     tags: opts.tags,
     ...(opts.target ? { target: opts.target } : {}),
+    ...(opts.anchor ? { anchor: opts.anchor } : {}),
   })
   await item.sign(config.signer)
+  return item
+}
+
+async function postAns104 (config: AoConfig, path: string, item: DataItem) {
   const { res, body } = await request(config, 'POST', path, {
     headers: ANS104_HEADERS,
     body: item.getRaw() as unknown as BodyInit,
   })
   return { id: item.id, res, body }
+}
+
+function slotFromBody (body: string): string | null {
+  try {
+    const slot: unknown = JSON.parse(body)?.slot
+    if (typeof slot === 'number' && Number.isSafeInteger(slot) && slot >= 0) return String(slot)
+    if (typeof slot === 'string' && /^\d+$/.test(slot)) return slot
+  } catch { /* not JSON */ }
+  return null
 }
 
 // ---------------------------------------------------------------------------
@@ -173,7 +188,8 @@ export async function spawnProcess (
   // A spawn is NOT retried: secp256k1 signing is deterministic, so a retry of
   // identical content yields the same id, but a retry after a partially-applied
   // spawn is not something we want to paper over silently.
-  const { id, res } = await postAns104(config, '/~scheduler@1.0/schedule', { tags, data })
+  const item = await signAns104(config, { tags, data })
+  const { id, res } = await postAns104(config, '/~scheduler@1.0/schedule', item)
   const processId = res.headers.get('process') ?? id
   // A spawn only SCHEDULES slot 0 — HyperBEAM computes lazily. Force it and confirm the
   // process resolves, so a spawn that cannot compute fails HERE rather than as a puzzling
@@ -218,6 +234,11 @@ async function forceFirstCompute (
  *
  * Retried on transport/5xx failures only — a 4xx means the node or the contract
  * rejected the message, and repeating it just repeats the rejection.
+ *
+ * Each call signs with a fresh random anchor, and its retries resend the same bytes.
+ * The runtime skips a message id it has already processed, so distinct calls never
+ * collide, and a retry whose first attempt already landed reports that attempt's slot
+ * and output.
  */
 export async function sendMessage (
   config: AoConfig,
@@ -233,17 +254,15 @@ export async function sendMessage (
     ...(opts.action ? [{ name: 'action', value: opts.action }] : []),
     ...(opts.tags ?? []),
   ]
+  const anchor = base64url(globalThis.crypto.getRandomValues(new Uint8Array(24)))
+  const item = await signAns104(config, {
+    tags, data: opts.data ?? '', target: opts.processId, anchor,
+  })
   const sent = await withRetry(config, `send ${opts.action ?? 'message'}`, async () => {
     const { id, res, body } = await postAns104(
-      config,
-      `/${opts.processId}~process@1.0/push`,
-      { tags, data: opts.data ?? '', target: opts.processId }
+      config, `/${opts.processId}~process@1.0/push`, item
     )
-    let slot = res.headers.get('slot')
-    if (slot === null) {
-      try { slot = String(JSON.parse(body).slot) } catch { /* leave null */ }
-    }
-    return { id, slot, body }
+    return { id, slot: res.headers.get('slot') ?? slotFromBody(body), body }
   })
 
   if (opts.confirm === false) return sent
@@ -258,13 +277,21 @@ export async function sendMessage (
     )
     return sent
   }
-  const output = (await readSlotOutput(config, opts.processId, sent.slot)).trim()
+  let output = (await readSlotOutput(config, opts.processId, sent.slot)).trim()
+  const first = DUPLICATE.exec(output)?.[1]
+  if (first !== undefined) {
+    sent.slot = first
+    output = (await readSlotOutput(config, opts.processId, first)).trim()
+  }
   const reason = parseContractError(output)
   if (reason !== null) {
     throw new AoContractError(reason, opts.processId, sent.slot, opts.action)
   }
   return { ...sent, output }
 }
+
+/** The runtime's output for a message id it has already processed, naming the first slot. */
+const DUPLICATE = /^error:\s*duplicate message \(slot (\d+)\)$/i
 
 /**
  * A rejected handler yields `error: <reason>` as the slot's output — the runtime

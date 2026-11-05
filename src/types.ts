@@ -114,9 +114,13 @@ export interface SendOptions {
 export interface SendResult {
   /** The signed DataItem id of the message. */
   id: string
-  /** Assigned slot, when the node reports one. */
+  /**
+   * Assigned slot, when the node reports one. When a retry reached the process after
+   * its first attempt had already landed, this is the first attempt's slot. With
+   * `confirm: false` it is the slot the last attempt was given.
+   */
   slot: string | null
-  /** Raw push response body (the signed assignment). */
+  /** Raw push response body (the signed assignment) of the last attempt. */
   body: string
   /**
    * The contract's own output for this message — `OK`, or a JSON payload for

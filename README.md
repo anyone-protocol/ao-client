@@ -123,6 +123,15 @@ round that silently did nothing cannot be mistaken for a round that settled. Pas
 The confirmation reads the message's **own slot**, not `now/` — `now/` reflects the
 latest slot, so under a concurrent writer it would report someone else's result.
 
+**Every send is a distinct message.** The native runtime skips a message id it has
+already processed. secp256k1 signing is deterministic, so two sends of the same content
+would otherwise share an id, and the second would be skipped. `sendMessage` signs each call
+once, with a fresh random anchor, and a retry within the call resends the same signed bytes.
+When a retry finds its first attempt already landed, the runtime answers
+`error: duplicate message (slot <n>)`, and `sendMessage` returns slot `<n>` and its output.
+If the contract rejected the message at slot `<n>`, `sendMessage` throws `AoContractError`
+for slot `<n>`.
+
 **Only transport failures are retried.** A 4xx, a missing key, a malformed tag and a
 contract rejection are all deterministic; repeating them wastes time and prints the
 same error three times. See `errors.ts`.
@@ -144,6 +153,9 @@ npm run typecheck
 npm run build
 HB_URL=http://localhost:8734 MODULE_ID=<seed module id> bun run scripts/smoke.ts
 ```
+
+CI runs the typecheck and the build, and fails when the committed `dist/` differs from a
+fresh build.
 
 The smoke test is the one that matters: a typecheck proves nothing about ANS-104 byte
 layout, tag ordering, or signature round-tripping. It drives every verb against a real
